@@ -8,8 +8,7 @@
 import sys
 import threading
 import traceback
-import queue
-from time import time
+import queue as Queue
 
 
 # exceptions
@@ -56,12 +55,12 @@ def makeRequests(callable_, args_list, callback=None,
         if isinstance(item, tuple):
             requests.append(
                 WorkRequest(callable_, item[0], item[1], callback=callback,
-                    exc_callback=exc_callback)
+                            exc_callback=exc_callback)
             )
         else:
             requests.append(
                 WorkRequest(callable_, [item], None, callback=callback,
-                    exc_callback=exc_callback)
+                            exc_callback=exc_callback)
             )
     return requests
 
@@ -140,8 +139,8 @@ class WorkRequest:
 
     """
 
-    def __init__(self, callable_, args=None, kwds=None, requestID=None,
-            callback=None, exc_callback=_handle_thread_exception):
+    def __init__(self, callable_, args=None, kwds=None, requestID=None, callback=None,
+                 exc_callback=_handle_thread_exception):
         """Create a work request for a callable and attach callbacks.
 
         A work request consists of the a callable to be executed by a
@@ -193,7 +192,8 @@ class ThreadPool:
 
     """
 
-    def __init__(self, min_workers_num=0, max_workers_num=0, q_size=0, resq_size=0, poll_timeout=5, auto_dismiss_time=300):
+    def __init__(self, min_workers_num=0, max_workers_num=0, q_size=0, resq_size=0, poll_timeout=5,
+                 auto_dismiss_time=300):
         """
 
         """
@@ -220,6 +220,11 @@ class ThreadPool:
             self.workers.append(WorkerThread(self._requests_queue, self._results_queue, poll_timeout=self.poll_timeout))
 
     def dismiss_idle_worker(self, do_join=False):
+        """
+        dismiss all idle workers which satisfied idle time condition
+        @param do_join:
+        @return:
+        """
         dismiss_list = []
         for i in range(len(self.workers)):
             idle_time = self.workers[i].idle_time()
@@ -233,8 +238,8 @@ class ThreadPool:
                 worker.join()
 
     def submit(self, request, block=True, timeout=None):
+        """submit work request into work queue and save its id for later."""
         with self._inner_lock:
-            """submit work request into work queue and save its id for later."""
             assert isinstance(request, WorkRequest)
             # don't reuse old work requests
             assert not getattr(request, 'exception', None)
@@ -248,7 +253,7 @@ class ThreadPool:
         :return:
         """
         if len(self.workers) < self.max_workers_num:
-            self.workers.append(WorkerThread(self._requests_queue, self._results_queue, poll_timeout=poll_timeout))
+            self.workers.append(WorkerThread(self._requests_queue, self._results_queue, poll_timeout=self.poll_timeout))
 
     def poll(self, block=False):
         """Process any new results in the queue."""
@@ -266,8 +271,7 @@ class ThreadPool:
                 if request.exception and request.exc_callback:
                     request.exc_callback(request, result)
                 # hand results to callback, if any
-                if request.callback and not \
-                       (request.exception and request.exc_callback):
+                if request.callback and not (request.exception and request.exc_callback):
                     request.callback(request, result)
                 del self.workRequests[request.requestID]
             except Queue.Empty:
