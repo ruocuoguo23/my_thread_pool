@@ -33,8 +33,8 @@ def _handle_thread_exception(request, exc_info):
 
 
 # utility functions
-def makeRequests(callable_, args_list, callback=None,
-                 exc_callback=_handle_thread_exception):
+def make_requests(callable_, args_list, callback=None,
+                  exc_callback=_handle_thread_exception):
     """Create several work requests for same callable with different arguments.
 
     Convenience function for creating several work requests for the same
@@ -133,7 +133,7 @@ class WorkerThread(threading.Thread):
 class WorkRequest:
     """A request to execute a callable for putting in the request queue later.
 
-    See the module function ``makeRequests`` for the common case
+    See the module function ``make_requests`` for the common case
     where you want to build several ``WorkRequest`` objects for the same
     callable but with different arguments for each call.
 
@@ -194,21 +194,19 @@ class ThreadPool:
 
     def __init__(self, min_workers_num=0, max_workers_num=0, q_size=0, resq_size=0, poll_timeout=5,
                  auto_dismiss_time=300):
-        """
-
-        """
         self._requests_queue = Queue.Queue(q_size)
         self._results_queue = Queue.Queue(resq_size)
         self.workers = []
         self.max_workers_num = max_workers_num
+        self.min_workers_num = min_workers_num if min_workers_num <= max_workers_num else max_workers_num
         self.dismissedWorkers = []
         self.workRequests = {}
         self.poll_timeout = poll_timeout
-        self.create_workers(min_workers_num)
+        self.create_workers()
         self._inner_lock = threading.Lock()
         self.auto_dismiss_time = auto_dismiss_time
 
-    def create_workers(self, num_workers):
+    def create_workers(self):
         """Add num_workers worker threads to the pool.
 
         ``poll_timeout`` sets the interval in seconds (int or float) for how
@@ -216,7 +214,7 @@ class ThreadPool:
         requests.
 
         """
-        for _ in range(num_workers):
+        for _ in range(self.min_workers_num):
             self.workers.append(WorkerThread(self._requests_queue, self._results_queue, poll_timeout=self.poll_timeout))
 
     def dismiss_idle_worker(self, do_join=False):
@@ -225,17 +223,23 @@ class ThreadPool:
         @param do_join:
         @return:
         """
-        dismiss_list = []
-        for i in range(len(self.workers)):
-            idle_time = self.workers[i].idle_time()
-            if idle_time > self.auto_dismiss_time:
-                worker = self.workers.pop(i)
-                worker.dismiss()
-                dismiss_list.append(worker)
+        with self._inner_lock:
+            dismiss_list = []
+            for cur_worker in self.workers:
+                if len(self.workers) - len(dismiss_list) <= self.min_workers_num:
+                    break
 
-        if do_join:
+                if cur_worker.idle_time() > self.auto_dismiss_time:
+                    dismiss_list.append(cur_worker)
+
+            self.workers = [cur_worker for cur_worker in self.workers if cur_worker not in dismiss_list]
             for worker in dismiss_list:
-                worker.join()
+                print("dismiss {0}".format(worker))
+                worker.dismiss()
+
+            if do_join:
+                for worker in dismiss_list:
+                    worker.join()
 
     def submit(self, request, block=True, timeout=None):
         """submit work request into work queue and save its id for later."""
@@ -252,8 +256,10 @@ class ThreadPool:
 
         :return:
         """
-        if len(self.workers) < self.max_workers_num:
-            self.workers.append(WorkerThread(self._requests_queue, self._results_queue, poll_timeout=self.poll_timeout))
+        if len(self.workers) < self.max_workers_num and len(self.workers) < self._requests_queue.qsize():
+            worker = WorkerThread(self._requests_queue, self._results_queue, poll_timeout=self.poll_timeout)
+            print("adjust by add a new worker {0}", worker)
+            self.workers.append(worker)
 
     def poll(self, block=False):
         """Process any new results in the queue."""
@@ -283,6 +289,8 @@ class ThreadPool:
             try:
                 self.poll(True)
             except NoResultsPending:
+                break
+            except NoWorkersAvailable:
                 break
 
 
